@@ -5,7 +5,7 @@ import plotly.express as px
 import os
 import re
 
-# 1. 網頁設定 (初始寬版，側邊欄預設開啟)
+# 1. 網頁設定
 st.set_page_config(page_title="InvestPie 投資派", layout="wide", initial_sidebar_state="auto")
 DATA_FILE = "portfolio_data.csv"
 
@@ -22,7 +22,7 @@ def load_data():
 if 'portfolio' not in st.session_state:
     st.session_state.portfolio = load_data()
 
-# 2. 視覺化 CSS
+# 2. 視覺化 CSS (強化數據顯示)
 st.markdown("""
     <style>
     .metric-box {
@@ -30,15 +30,16 @@ st.markdown("""
         text-align: center; margin-bottom: 10px; border: 1px solid #333;
     }
     .metric-label { font-size: 14px; color: #a3a7b0; }
-    .metric-value { font-size: 22px; font-weight: bold; margin-top: 5px; }
+    .metric-value { font-size: 24px; font-weight: bold; margin-top: 5px; }
     .up-color { color: #FF4B4B; } .down-color { color: #00FF00; }
+    /* 調整表格字體 */
+    [data-testid="stTable"] { font-size: 16px; }
     </style>
     """, unsafe_allow_html=True)
 
 # --- B. 側邊欄：控制中心 ---
 with st.sidebar:
     st.title("🥧 InvestPie")
-    # 關鍵功能：手動切換模式
     view_mode = st.radio("🖥️ 介面顯示模式", ["手機版 (分頁式)", "電腦版 (全開式)"], index=0)
     
     st.divider()
@@ -70,9 +71,8 @@ with st.sidebar:
 
 # --- C. 主要顯示邏輯 ---
 if not st.session_state.portfolio.empty:
-    with st.spinner('同步市場數據中...'):
+    with st.spinner('同步市場報價中...'):
         df = st.session_state.portfolio.copy()
-        # 抓取報價 (簡化版邏輯)
         prices = []
         for t in df["ticker"]:
             try:
@@ -86,31 +86,39 @@ if not st.session_state.portfolio.empty:
         df["損益"] = df["目前市值"] - df["cost"]
         df["報酬率(%)"] = (df["損益"] / df["cost"].replace(0, 1)) * 100
 
-    # 頂部總覽數據 (不論哪種模式都顯示)
     total_mv = df['目前市值'].sum()
     total_pnl = df['損益'].sum()
     total_roi = (total_pnl / df['cost'].sum() * 100) if df['cost'].sum() != 0 else 0
     pnl_class = "up-color" if total_pnl > 0 else "down-color" if total_pnl < 0 else ""
 
-    # --- 模式 A：電腦版 (一頁看全域) ---
+    # 定義表格欄位設定 (解決 .9999 問題)
+    column_cfg = {
+        "代號": st.column_config.TextColumn("代號", disabled=True),
+        "類型": st.column_config.SelectboxColumn("類型", options=type_list),
+        "股數": st.column_config.NumberColumn("股數", format="%d"),
+        "買入均價": st.column_config.NumberColumn("均價", format="%.2f"),
+        "目前現價": st.column_config.NumberColumn("現價", disabled=True, format="%.2f"),
+        "目前市值": st.column_config.NumberColumn("市值", disabled=True, format="NT$ %d"),
+        "損益": st.column_config.NumberColumn("損益", disabled=True, format="%d"),
+        "報酬率(%)": st.column_config.NumberColumn("ROI", disabled=True, format="%.2f%%"),
+    }
+
+    # --- 模式切換渲染 ---
     if view_mode == "電腦版 (全開式)":
         st.header("📈 資產全域總覽")
-        # 指標橫排
         c1, c2, c3 = st.columns(3)
         with c1: st.markdown(f'<div class="metric-box"><div class="metric-label">總市值</div><div class="metric-value">NT$ {total_mv:,.0f}</div></div>', unsafe_allow_html=True)
         with c2: st.markdown(f'<div class="metric-box"><div class="metric-label">總損益</div><div class="metric-value {pnl_class}">{total_pnl:,.0f}</div></div>', unsafe_allow_html=True)
         with c3: st.markdown(f'<div class="metric-box"><div class="metric-label">整體報酬率</div><div class="metric-value {pnl_class}">{total_roi:.2f}%</div></div>', unsafe_allow_html=True)
         
-        # 圖表並排
         p1, p2 = st.columns(2)
         with p1: st.plotly_chart(px.pie(df, values='目前市值', names='group', hole=0.4, title="類型占比"), use_container_width=True)
         with p2: st.plotly_chart(px.pie(df, values='目前市值', names='ticker', hole=0.4, title="持股占比"), use_container_width=True)
         
-        # 明細表在下方
         st.subheader("💰 損益明細表")
-        st.data_editor(df[["ticker", "group", "shares", "買入均價", "目前現價", "目前市值", "損益", "報酬率(%)"]], hide_index=True, use_container_width=True, key="pc_editor")
+        edit_df = df[["ticker", "group", "shares", "買入均價", "目前現價", "目前市值", "損益", "報酬率(%)"]].rename(columns={"ticker":"代號","group":"類型","shares":"股數"})
+        edited_df = st.data_editor(edit_df, column_config=column_cfg, hide_index=True, use_container_width=True, key="pc_editor")
 
-    # --- 模式 B：手機版 (分頁瀏覽) ---
     else:
         tab1, tab2 = st.tabs(["📊 看板", "📝 編輯"])
         with tab1:
@@ -118,13 +126,23 @@ if not st.session_state.portfolio.empty:
             with m1: st.markdown(f'<div class="metric-box"><div class="metric-label">市值</div><div class="metric-value">{total_mv:,.0f}</div></div>', unsafe_allow_html=True)
             with m2: st.markdown(f'<div class="metric-box"><div class="metric-label">損益</div><div class="metric-value {pnl_class}">{total_pnl:,.0f}</div></div>', unsafe_allow_html=True)
             with m3: st.markdown(f'<div class="metric-box"><div class="metric-label">報酬</div><div class="metric-value {pnl_class}">{total_roi:.1f}%</div></div>', unsafe_allow_html=True)
-            
             st.plotly_chart(px.pie(df, values='目前市值', names='group', hole=0.5, height=350), use_container_width=True)
             st.plotly_chart(px.pie(df, values='目前市值', names='ticker', hole=0.5, height=350), use_container_width=True)
         
         with tab2:
             st.subheader("編輯持股")
-            st.data_editor(df[["ticker", "group", "shares", "買入均價", "目前現價", "損益"]], hide_index=True, use_container_width=True, key="mob_editor")
+            edit_df = df[["ticker", "group", "shares", "買入均價", "目前現價", "損益"]].rename(columns={"ticker":"代號","group":"類型","shares":"股數"})
+            edited_df = st.data_editor(edit_df, column_config=column_cfg, hide_index=True, use_container_width=True, key="mob_editor")
+
+    # 檢查改動並同步存檔 (通用邏輯)
+    if 'edited_df' in locals() and not edited_df.equals(edit_df):
+        new_portfolio = edited_df[["代號", "類型", "股數", "買入均價"]].copy()
+        new_portfolio.columns = ["ticker", "group", "shares", "avg_price"]
+        new_portfolio["cost"] = new_portfolio["shares"] * new_portfolio["avg_price"]
+        new_portfolio = new_portfolio[new_portfolio["shares"] > 0]
+        st.session_state.portfolio = new_portfolio[["ticker", "group", "shares", "cost"]].reset_index(drop=True)
+        save_data(st.session_state.portfolio)
+        st.rerun()
 
 else:
     st.info("💡 歡迎！請在左側選單新增自選股。")
